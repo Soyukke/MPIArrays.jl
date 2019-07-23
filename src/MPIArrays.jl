@@ -5,68 +5,11 @@ export MPIArray, localindices, getblock, getblock!, putblock!, allocate, forloca
 using MPI
 import LinearAlgebra
 
-"""
-Store the distribution of the array indices over the different partitions.
-This class forces a continuous, ordered distribution without overlap
+include("cyclic_range.jl")
+include("partitioning.jl")
 
-    ContinuousPartitioning(partition_sizes...)
 
-Construct a distribution using the number of elements per partition in each direction, e.g:
 
-```
-p = ContinuousPartitioning([2,5,3], [2,3])
-```
-
-will construct a distribution containing 6 partitions of 2, 5 and 3 rows and 2 and 3 columns.
-
-"""
-struct ContinuousPartitioning{N} <: AbstractArray{Int,N}
-    ranks::LinearIndices{N,NTuple{N,Base.OneTo{Int}}}
-    index_starts::NTuple{N,Vector{Int}}
-    index_ends::NTuple{N,Vector{Int}}
-
-    function ContinuousPartitioning(partition_sizes::Vararg{Any,N}) where {N}
-        index_starts = Vector{Int}.(undef,length.(partition_sizes))
-        index_ends = Vector{Int}.(undef,length.(partition_sizes))
-        for (idxstart,idxend,nb_elems_dist) in zip(index_starts,index_ends,partition_sizes)
-            currentstart = 1
-            currentend = 0
-            for i in eachindex(idxstart)
-                currentend += nb_elems_dist[i]
-                idxstart[i] = currentstart
-                idxend[i] = currentend
-                currentstart += nb_elems_dist[i]
-            end
-        end
-        ranks = LinearIndices(length.(partition_sizes))
-        return new{N}(ranks, index_starts, index_ends)
-    end
-end
-
-Base.IndexStyle(::Type{ContinuousPartitioning{N}}) where {N} = IndexCartesian()
-Base.size(p::ContinuousPartitioning) = length.(p.index_starts)
-@inline function Base.getindex(p::ContinuousPartitioning{N}, I::Vararg{Int, N}) where {N}
-    return UnitRange.(getindex.(p.index_starts,I), getindex.(p.index_ends,I))
-end
-
-function partition_sizes(p::ContinuousPartitioning)
-    result = (p.index_ends .- p.index_starts)
-    for v in result
-        v .+= 1
-    end
-    return result
-end
-
-"""
-  (private method)
-
-Get the rank and local 0-based index
-"""
-function local_index(p::ContinuousPartitioning, I::NTuple{N,Int}) where {N}
-    proc_indices = searchsortedfirst.(p.index_ends, I)
-    lininds = LinearIndices(Base.Slice.(p[proc_indices...]))
-    return (p.ranks[proc_indices...]-1, lininds[I...] - first(lininds))
-end
 
 # Evenly distribute nb_elems over parts partitions
 function distribute(nb_elems, parts)
@@ -76,9 +19,9 @@ function distribute(nb_elems, parts)
 end
 
 mutable struct MPIArray{T,N} <: AbstractArray{T,N}
-    sizes::NTuple{N,Int}
+    sizes::NTuple{N,Int} # # global matrix size
     localarray::Array{T,N}
-    partitioning::ContinuousPartitioning{N}
+    partitioning::Partitioning{N}
     comm::MPI.Comm
     win::MPI.Win
     myrank::Int
@@ -95,6 +38,17 @@ mutable struct MPIArray{T,N} <: AbstractArray{T,N}
     end
 
     MPIArray{T}(sizes::Vararg{<:Integer,N}) where {T,N} = MPIArray{T}(MPI.COMM_WORLD, (MPI.Comm_size(MPI.COMM_WORLD), ones(Int,N-1)...), sizes...)
+
+    function MPIArray{T}(comm::MPI.Comm, n_procs::NTuple{N, Integer}, blocksizes::NTuple{N, Integer}, sizes::Vararg{<:Integer, N}) where {T, N}
+        nb_procs = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        partitioning = CyclicPartitioning(array_sizes=sizes, n_procs=n_procs, blocksizes=blocksizes)
+        localarray = Array{T}(undef,length.(partitioning[rank+1]))
+        win = MPI.Win_create(localarray, comm)
+        sizes = global_size_2d(partitioning)
+        return new{T, N}(sizes, localarray, partitioning, comm, win, rank)
+    end
+
     MPIArray{T}(comm::MPI.Comm, partitions::NTuple{N,<:Integer}, sizes::Vararg{<:Integer,N}) where {T,N} = MPIArray{T}(comm, distribute.(sizes, partitions)...)
 
     function MPIArray(comm::MPI.Comm, localarray::Array{T,N}, nb_partitions::Vararg{<:Integer,N}) where {T,N}
@@ -112,6 +66,7 @@ mutable struct MPIArray{T,N} <: AbstractArray{T,N}
         result = new{T,N}(sum.(partition_sizes), localarray, ContinuousPartitioning(partition_sizes...), comm, win, rank)
         return result
     end
+
 
     MPIArray(localarray::Array{T,N}, nb_partitions::Vararg{<:Integer,N}) where {T,N} = MPIArray(MPI.COMM_WORLD, localarray, nb_partitions...)
 end
