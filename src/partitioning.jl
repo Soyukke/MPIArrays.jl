@@ -99,21 +99,20 @@ function partition_sizes(p::ContinuousPartitioning)
     for v in result
         v .+= 1
     end
-    if MPI.Comm_rank(MPI.COMM_WORLD) == 0
-        print("in partition_sizes\n")
-        show(stdout, "text/plain", result)
-    end
     return result
 end
 
-# Cyclicのpartion_sizesをどうするか
-# function partition_sizes(p::CyclicPartitioning)
-#     result = (p.index_ends .- p.index_starts)
-#     for v in result
-#         v .+= 1
-#     end
-#     return result
-# end
+# Cyclic partion_sizes implemented only 1d and 2d
+function partition_sizes(p::CyclicPartitioning{1})
+    grids = map(x->length(p.partitions[x][1]), p.ranks[:, 1])
+    return (grids, )
+end
+function partition_sizes(p::CyclicPartitioning{2})
+    n_row = map(x->length(p.partitions[x][1]), p.ranks[:, 1])
+    n_col = map(x->length(p.partitions[x][2]), p.ranks[1, :])
+    result = (n_row, n_col)
+    return result
+end
 
 
 """
@@ -127,7 +126,19 @@ function local_index(p::ContinuousPartitioning, I::NTuple{N,Int}) where {N}
     return (p.ranks[proc_indices...]-1, lininds[I...] - first(lininds))
 end
 
-function local_index(p::CyclicPartitioning, I::NTuple{N,Int}) where {N}
+# 1-dimentional
+function local_index(p::CyclicPartitioning{1}, I::NTuple{1,Int})
+    cyclic_range = p.partitions[1][1]
+    # map global index to local array
+    # global_index_mapped = product(cyclic_range...)
+    rank_indices = local_index(cyclic_range, I[1])[1]
+    local_indices = local_index(cyclic_range, I[1])[2]
+    # to 0-based index (rank, indices of local matrix)
+    return p.ranks[rank_indices]-1, local_indices-1
+end
+
+# 2-dimentional
+function local_index(p::CyclicPartitioning{2}, I::NTuple{2,Int})
     # return local indices as 1 dimensional
     rank, (i, j) = local_index_xd(p, I)
     n_local_row, n_local_col = length.(p.partitions[rank+1])
@@ -147,9 +158,15 @@ function local_index_xd(p::CyclicPartitioning, I::NTuple{N,Int}) where {N}
     return p.ranks[rank_indices...]-1, local_indices .- 1
 end
 
-function global_size_2d(p::CyclicPartitioning) where {N}
+function global_size(p::CyclicPartitioning{1})
+    n_index = sum(map(x->length(p.partitions[x]), p.ranks))
+    return n_index
+end
+
+function global_size(p::CyclicPartitioning{2})
     n_row = sum(map(x->length(p.partitions[x][1]), p.ranks[:, 1]))
     n_col = sum(map(x->length(p.partitions[x][2]), p.ranks[1, :]))
     return (n_row, n_col)
 end
 
+blocksizes(p::CyclicPartitioning) = map(x->x.blocksize, p.partitions[1])

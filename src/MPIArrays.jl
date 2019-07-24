@@ -1,6 +1,7 @@
 module MPIArrays
 
 export MPIArray, localindices, getblock, getblock!, putblock!, allocate, forlocalpart, forlocalpart!, free, redistribute, redistribute!, sync, GlobalBlock, GhostedBlock, getglobal, globaltolocal, globalids
+export CyclicMPIArray, pids, blocksizes
 
 using MPI
 import LinearAlgebra
@@ -39,15 +40,6 @@ mutable struct MPIArray{T,N} <: AbstractArray{T,N}
 
     MPIArray{T}(sizes::Vararg{<:Integer,N}) where {T,N} = MPIArray{T}(MPI.COMM_WORLD, (MPI.Comm_size(MPI.COMM_WORLD), ones(Int,N-1)...), sizes...)
 
-    function MPIArray{T}(comm::MPI.Comm, n_procs::NTuple{N, Integer}, blocksizes::NTuple{N, Integer}, sizes::Vararg{<:Integer, N}) where {T, N}
-        nb_procs = MPI.Comm_size(comm)
-        rank = MPI.Comm_rank(comm)
-        partitioning = CyclicPartitioning(array_sizes=sizes, n_procs=n_procs, blocksizes=blocksizes)
-        localarray = Array{T}(undef,length.(partitioning[rank+1]))
-        win = MPI.Win_create(localarray, comm)
-        sizes = global_size_2d(partitioning)
-        return new{T, N}(sizes, localarray, partitioning, comm, win, rank)
-    end
 
     MPIArray{T}(comm::MPI.Comm, partitions::NTuple{N,<:Integer}, sizes::Vararg{<:Integer,N}) where {T,N} = MPIArray{T}(comm, distribute.(sizes, partitions)...)
 
@@ -69,8 +61,29 @@ mutable struct MPIArray{T,N} <: AbstractArray{T,N}
 
 
     MPIArray(localarray::Array{T,N}, nb_partitions::Vararg{<:Integer,N}) where {T,N} = MPIArray(MPI.COMM_WORLD, localarray, nb_partitions...)
+
+    # Cyclic
+    function MPIArray{T}(comm::MPI.Comm, n_procs::NTuple{N, Integer}, blocksizes::NTuple{N, Integer}, sizes::NTuple{N, Integer}) where {T, N}
+        nb_procs = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        partitioning = CyclicPartitioning(array_sizes=sizes, n_procs=n_procs, blocksizes=blocksizes)
+        localarray = Array{T}(undef,length.(partitioning[rank+1]))
+        win = MPI.Win_create(localarray, comm)
+        return new{T, N}(sizes, localarray, partitioning, comm, win, rank)
+    end
+    # MPIArray{T}(;sizes::NTuple{N, Integer}, n_procs::NTuple{N, Integer}=(MPI.Comm_size(MPI.COMM_WORLD), ones(Int, N-1)...) , blocksizes::NTuple{N, Integer}=(1, 1)) where {T, N} = MPIArray{T}(MPI.COMM_WORLD, n_procs, blocksizes, sizes...)
+
+
 end
 
+function CyclicMPIArray(T::Type, sizes::Vararg{<:Integer, N}; comm=MPI.COMM_WORLD, proc_grids=(MPI.Comm_size(MPI.COMM_WORLD), ones(Int, N-1)...), blocksizes=Tuple(ones(Int, N))) where N
+    return MPIArray{T}(comm, proc_grids, blocksizes, sizes)
+end
+
+# like DArray.pids
+pids(a::MPIArray) = map(x->x, a.partitioning.ranks)
+# for cyclic MPIArray
+blocksizes(a::MPIArray) = blocksizes(a.partitioning)
 
 Base.IndexStyle(::Type{MPIArray{T,N}}) where {T,N} = IndexCartesian()
 
@@ -113,11 +126,15 @@ Collective call, making sure all operations modifying any part of the array are 
 sync(a::MPIArray, ::Vararg{MPIArray, N}) where N = MPI.Barrier(a.comm)
 
 function Base.similar(a::MPIArray, ::Type{T}, dims::NTuple{N,Int}) where {T,N}
+    # partition size of a e.g. ([4, 4], [4, 4])
     old_partition_sizes = partition_sizes(a.partitioning)
     old_dims = size(a)
     new_partition_sizes = Vector{Int}[]
+    # e.g. length.(old_partition_sizes) = (8, 8)
+    # prod = 8 * 8 = 64 == n_element
     remaining_nb_partitons = prod(length.(old_partition_sizes))
     for i in eachindex(dims)
+        # i = 1, 2, 3...
         if i <= length(old_dims)
             if dims[i] == old_dims[i]
                 push!(new_partition_sizes, old_partition_sizes[i])
@@ -250,16 +267,19 @@ struct Block{T,N}
     targetrankindices::CartesianIndices{N,NTuple{N,UnitRange{Int}}}
 
     function Block(a::MPIArray{T,N}, ranges::Vararg{AbstractRange{Int},N}) where {T,N}
+        # TODO CyclicRange
+        # search target_rank_indices by ranges
         start_indices =  searchsortedfirst.(a.partitioning.index_ends, first.(ranges))
         end_indices = searchsortedfirst.(a.partitioning.index_ends, last.(ranges))
         targetrankindices = CartesianIndices(UnitRange.(start_indices, end_indices))
-
         return new{T,N}(a, UnitRange.(ranges), targetrankindices)
     end
 end
 
 Base.getindex(a::MPIArray{T,N}, I::Vararg{UnitRange{Int},N}) where {T,N} = Block(a,I...)
 Base.getindex(a::MPIArray{T,N}, I::Vararg{Colon,N}) where {T,N} = Block(a,axes(a)...)
+# TODO Cyclic distributed MPIArray
+# Base.getindex(a::MPIArray{T,N}, I::Vararg{CyclicRange{Int},N}) where {T,N} = Block(a,I...)
 
 
 """
