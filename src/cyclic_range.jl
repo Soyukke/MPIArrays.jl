@@ -20,9 +20,13 @@ function number_element_local(r::CyclicRange)
 
     n_element_local = r.blocksize*n_block_local
     n_extra_element = n_element % r.blocksize
-    if r.split_index <= n_extra_element && n_extra_block == 0
-        n_element_local += 1
-    elseif r.split_index == r.n_split && n_extra_block != 0
+
+    # add extra block
+    if r.split_index <= n_extra_block
+        n_element_local += r.blocksize
+    end
+    # add extra element, 
+    if r.split_index == n_extra_block + 1 && n_extra_element != 0
         n_element_local += n_extra_element
     end
     return n_element_local

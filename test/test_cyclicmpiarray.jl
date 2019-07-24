@@ -52,6 +52,24 @@ if n_proc % 2 == 0
     free(A)
 end
 
+# 5
+if n_proc % 2 == 0
+    A = CyclicMPIArray(Int64, 99, 99, proc_grids=(Int(n_proc/2), 2), blocksizes=(23, 23))
+
+    print("rank: $rank, $(size(A.localarray))\n")
+    println("$(collect(localindices(A)[1]))")
+
+    forlocalpart!(x -> fill!(x, rank), A)
+    sync(A)
+    if rank == 0
+
+        println("size $(size(A))")
+        show(stdout, "text/plain", A)
+        println()
+    end
+    free(A)
+end
+
 
 
 
