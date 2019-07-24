@@ -59,7 +59,7 @@ struct CyclicPartitioning{N} <: Partitioning{N}
     ranks::LinearIndices{N,NTuple{N,Base.OneTo{Int}}}
     partitions::Array{NTuple{N, CyclicRange}, N}
 
-    function CyclicPartitioning(;array_sizes::NTuple{N, Integer}, n_procs::NTuple{N, Integer}, blocksizes::NTuple{N, Integer}) where {N}
+    function CyclicPartitioning(;array_sizes::NTuple{N, T}, n_procs::NTuple{N, T}, blocksizes::NTuple{N, T}) where {N, T<:Integer}
         # process grid array
         ranks = LinearIndices(n_procs)
         # indices array
@@ -69,7 +69,7 @@ struct CyclicPartitioning{N} <: Partitioning{N}
             cyclic_ranges = CyclicRange[]
             for (dim, array_size, n_proc, blocksize) in zip(1:N, array_sizes, n_procs, blocksizes)
                 # Index of grid of process in dim dimension
-                cyclic_range = CyclicRange(start=1, stop=array_size, blocksize=blocksize, n_split=n_proc, split_index=process_indices[dim])
+                cyclic_range = CyclicRange(start=T(1), stop=array_size, blocksize=blocksize, n_split=n_proc, split_index=process_indices[dim])
                 push!(cyclic_ranges, cyclic_range)
             end
             partitions[process_indices...] = Tuple(cyclic_ranges)
