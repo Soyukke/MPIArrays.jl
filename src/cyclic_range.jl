@@ -16,9 +16,10 @@ number_element(r::CyclicRange) = r.stop - r.start + 1
 
 function number_element_local(r::CyclicRange)
     n_element = number_element(r)
-    n_block_local, n_extra_block = number_block_local(r)
+    n_block_local_min = number_block_local_min(r)
+    n_extra_block = number_block_global_extra(r)
 
-    n_element_local = r.blocksize*n_block_local
+    n_element_local = r.blocksize*n_block_local_min
     n_extra_element = n_element % r.blocksize
 
     # add extra block
@@ -38,14 +39,16 @@ function number_block(r::CyclicRange)
     return n_block
 end
 
-function number_block_local(r::CyclicRange{T}) where T<: Integer
+function number_block_local_min(r::CyclicRange{T}) where T <: Integer
     n_block = number_block(r)
     n_block_local = n_block ÷ r.n_split
+    return n_block_local
+end
+
+function number_block_global_extra(r::CyclicRange{T}) where T <: Integer
+    n_block = number_block(r)
     n_extra_block = n_block % r.n_split
-    if r.split_index <= n_extra_block
-        n_block_local += 1
-    end
-    return n_block_local, n_extra_block
+    return n_extra_block
 end
 
 function local_index(r::CyclicRange, i::Integer)

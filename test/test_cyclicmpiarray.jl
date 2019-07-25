@@ -54,7 +54,7 @@ end
 
 # 5
 if n_proc % 2 == 0
-    A = CyclicMPIArray(Int64, 99, 99, proc_grids=(Int(n_proc/2), 2), blocksizes=(23, 23))
+    A = CyclicMPIArray(Int64, 11, 9, proc_grids=(Int(n_proc/2), 2), blocksizes=(3, 3))
 
     print("rank: $rank, $(size(A.localarray))\n")
     println("$(collect(localindices(A)[1]))")

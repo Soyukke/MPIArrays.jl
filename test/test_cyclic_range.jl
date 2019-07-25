@@ -6,10 +6,15 @@ cr1 = CyclicRange(start=1, stop=11, blocksize=2, n_split=3, split_index=1)
 cr2 = CyclicRange(start=1, stop=11, blocksize=2, n_split=3, split_index=2)
 cr3 = CyclicRange(start=1, stop=11, blocksize=2, n_split=3, split_index=3)
 
+# a a b b c c a a b b c
 @show cr1 cr2 cr3
 
 @show length(cr1) length(cr2) length(cr3)
-
+# nblock = 1, extra_block = 0
+@test MPIArrays.number_block_local_min(cr1) == 1
+@test collect(cr1) == [1, 2, 7, 8]
+@test collect(cr2) == [3, 4, 9, 10]
+@test collect(cr3) == [5, 6, 11]
 @test length(cr1) == 4
 @test length(cr2) == 4
 @test length(cr3) == 3
