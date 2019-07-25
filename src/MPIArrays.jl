@@ -10,6 +10,7 @@ abstract type AbstractMPIArray{T, N} <: AbstractArray{T, N} end
 
 include("cyclic_range.jl")
 include("partitioning.jl")
+include("linalg.jl")
 
 
 
@@ -75,6 +76,8 @@ mutable struct MPIArray{T,N} <: AbstractMPIArray{T,N}
     end
     # MPIArray{T}(;sizes::NTuple{N, Integer}, n_procs::NTuple{N, Integer}=(MPI.Comm_size(MPI.COMM_WORLD), ones(Int, N-1)...) , blocksizes::NTuple{N, Integer}=(1, 1)) where {T, N} = MPIArray{T}(MPI.COMM_WORLD, n_procs, blocksizes, sizes...)
 
+    MPIArray{T, N}(sizes::NTuple{N, Int}, localarray::Array{T, N}, partitioning::Partitioning{N}, comm::MPI.Comm, win::MPI.Win, myrank::Int) where {T, N} = new{T, N}(sizes, localarray, partitioning, comm, win, myrank)
+
 
 end
 
@@ -91,6 +94,12 @@ Base.IndexStyle(::Type{AbstractMPIArray{T,N}}) where {T,N} = IndexCartesian()
 
 Base.size(a::AbstractMPIArray) = a.sizes
 
+function Base.copy(a::AbstractMPIArray{T, N}) where {T, N}
+    localarray = copy(a.localarray)
+    partitioning = a.partitioning
+    win = MPI.Win_create(localarray, a.comm)
+    return MPIArray{T, N}(a.sizes, localarray, partitioning, a.comm, win, a.myrank)
+end
 # Individual element access. WARNING: this is slow
 function Base.getindex(a::AbstractMPIArray{T,N}, I::Vararg{Int, N}) where {T,N}
     (target_rank, locind) = local_index(a.partitioning,I)
@@ -355,6 +364,15 @@ function free(a::AbstractMPIArray{T,N}) where {T,N}
     sync(a)
     MPI.free(a.win)
 end
+
+function free(va::Vararg{AbstractMPIArray, N}) where N
+    for a in va
+        sync(a)
+        MPI.free(a.win)
+    end
+end
+
+
 
 using CustomUnitRanges: filename_for_urange
 include(filename_for_urange)
