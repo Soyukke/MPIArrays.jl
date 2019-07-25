@@ -6,6 +6,8 @@ export CyclicMPIArray, pids, blocksizes
 using MPI
 import LinearAlgebra
 
+abstract type MPIArrayAbstract{T, N} <: AbstractArray{T, N} end
+
 include("cyclic_range.jl")
 include("partitioning.jl")
 
@@ -19,7 +21,7 @@ function distribute(nb_elems, parts)
     return [p <= remainder ? local_len+1 : local_len for p in 1:parts]
 end
 
-mutable struct MPIArray{T,N} <: AbstractArray{T,N}
+mutable struct MPIArray{T,N} <: MPIArrayAbstract{T,N}
     sizes::NTuple{N,Int} # # global matrix size
     localarray::Array{T,N}
     partitioning::Partitioning{N}
