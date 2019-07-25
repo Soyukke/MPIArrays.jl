@@ -6,7 +6,7 @@ export CyclicMPIArray, pids, blocksizes
 using MPI
 import LinearAlgebra
 
-abstract type MPIArrayAbstract{T, N} <: AbstractArray{T, N} end
+abstract type AbstractMPIArray{T, N} <: AbstractArray{T, N} end
 
 include("cyclic_range.jl")
 include("partitioning.jl")
@@ -21,7 +21,7 @@ function distribute(nb_elems, parts)
     return [p <= remainder ? local_len+1 : local_len for p in 1:parts]
 end
 
-mutable struct MPIArray{T,N} <: MPIArrayAbstract{T,N}
+mutable struct MPIArray{T,N} <: AbstractMPIArray{T,N}
     sizes::NTuple{N,Int} # # global matrix size
     localarray::Array{T,N}
     partitioning::Partitioning{N}
@@ -83,16 +83,16 @@ function CyclicMPIArray(T::Type, sizes::Vararg{<:Integer, N}; comm=MPI.COMM_WORL
 end
 
 # like DArray.pids
-pids(a::MPIArrayAbstract) = map(x->x, a.partitioning.ranks)
+pids(a::AbstractMPIArray) = map(x->x, a.partitioning.ranks)
 # for cyclic MPIArray
-blocksizes(a::MPIArrayAbstract) = blocksizes(a.partitioning)
+blocksizes(a::AbstractMPIArray) = blocksizes(a.partitioning)
 
-Base.IndexStyle(::Type{MPIArrayAbstract{T,N}}) where {T,N} = IndexCartesian()
+Base.IndexStyle(::Type{AbstractMPIArray{T,N}}) where {T,N} = IndexCartesian()
 
-Base.size(a::MPIArrayAbstract) = a.sizes
+Base.size(a::AbstractMPIArray) = a.sizes
 
 # Individual element access. WARNING: this is slow
-function Base.getindex(a::MPIArrayAbstract{T,N}, I::Vararg{Int, N}) where {T,N}
+function Base.getindex(a::AbstractMPIArray{T,N}, I::Vararg{Int, N}) where {T,N}
     (target_rank, locind) = local_index(a.partitioning,I)
     
     result = Ref{T}()
@@ -107,7 +107,7 @@ function Base.getindex(a::MPIArrayAbstract{T,N}, I::Vararg{Int, N}) where {T,N}
 end
 
 # Individual element setting. WARNING: this is slow
-function Base.setindex!(a::MPIArrayAbstract{T,N}, v, I::Vararg{Int, N}) where {T,N}
+function Base.setindex!(a::AbstractMPIArray{T,N}, v, I::Vararg{Int, N}) where {T,N}
     (target_rank, locind) = local_index(a.partitioning,I)
     
     MPI.Win_lock(MPI.LOCK_EXCLUSIVE, target_rank, 0, a.win)
@@ -125,9 +125,9 @@ end
 
 Collective call, making sure all operations modifying any part of the array are finished when it completes
 """
-sync(a::MPIArrayAbstract, ::Vararg{MPIArrayAbstract, N}) where N = MPI.Barrier(a.comm)
+sync(a::AbstractMPIArray, ::Vararg{AbstractMPIArray, N}) where N = MPI.Barrier(a.comm)
 
-function Base.similar(a::MPIArrayAbstract, ::Type{T}, dims::NTuple{N,Int}) where {T,N}
+function Base.similar(a::AbstractMPIArray, ::Type{T}, dims::NTuple{N,Int}) where {T,N}
     # partition size of a e.g. ([4, 4], [4, 4])
     old_partition_sizes = partition_sizes(a.partitioning)
     old_dims = size(a)
@@ -160,19 +160,19 @@ function Base.similar(a::MPIArrayAbstract, ::Type{T}, dims::NTuple{N,Int}) where
     return MPIArray{T}(a.comm, new_partition_sizes...)
 end
 
-function Base.filter(f,a::MPIArrayAbstract)
+function Base.filter(f,a::AbstractMPIArray)
     error("filter is only supported on 1D MPIArrays")
 end
 
-function Base.filter(f,a::MPIArrayAbstract{T,1}) where T
+function Base.filter(f,a::AbstractMPIArray{T,1}) where T
     return MPIArray(forlocalpart(v -> filter(f,v), a), length(a.partitioning))
 end
 
-function Base.filter!(f,a::MPIArrayAbstract)
+function Base.filter!(f,a::AbstractMPIArray)
     error("filter is only supported on 1D MPIArrays")
 end
 
-function copy_into!(dest::MPIArrayAbstract{T,N}, src::MPIArrayAbstract{T,N}) where {T,N}
+function copy_into!(dest::AbstractMPIArray{T,N}, src::AbstractMPIArray{T,N}) where {T,N}
     free(dest)
     dest.sizes = src.sizes
     dest.localarray = src.localarray
@@ -183,9 +183,9 @@ function copy_into!(dest::MPIArrayAbstract{T,N}, src::MPIArrayAbstract{T,N}) whe
     return dest
 end
 
-Base.filter!(f,a::MPIArrayAbstract{T,1}) where T = copy_into!(a, filter(f,a))
+Base.filter!(f,a::AbstractMPIArray{T,1}) where T = copy_into!(a, filter(f,a))
 
-function redistribute(a::MPIArrayAbstract{T,N}, partition_sizes::Vararg{Any,N}) where {T,N}
+function redistribute(a::AbstractMPIArray{T,N}, partition_sizes::Vararg{Any,N}) where {T,N}
     rank = MPI.Comm_rank(a.comm)
     @assert prod(length.(partition_sizes)) == MPI.Comm_size(a.comm)
     partitioning = ContinuousPartitioning(partition_sizes...)
@@ -193,18 +193,18 @@ function redistribute(a::MPIArrayAbstract{T,N}, partition_sizes::Vararg{Any,N}) 
     return MPIArray(a.comm, localarray, length.(partition_sizes)...)
 end
 
-function redistribute(a::MPIArrayAbstract{T,N}, nb_parts::Vararg{Int,N}) where {T,N}
+function redistribute(a::AbstractMPIArray{T,N}, nb_parts::Vararg{Int,N}) where {T,N}
     return redistribute(a, distribute.(size(a), nb_parts)...)
 end
 
-function redistribute(a::MPIArrayAbstract)
+function redistribute(a::AbstractMPIArray)
     return redistribute(a, size(a.partitioning)...)
 end
 
-redistribute!(a::MPIArrayAbstract{T,N}, partition_sizes::Vararg{Any,N})  where {T,N} = copy_into!(a, redistribute(a, partition_sizes...))
-redistribute!(a::MPIArrayAbstract) = redistribute!(a, size(a.partitioning)...)
+redistribute!(a::AbstractMPIArray{T,N}, partition_sizes::Vararg{Any,N})  where {T,N} = copy_into!(a, redistribute(a, partition_sizes...))
+redistribute!(a::AbstractMPIArray) = redistribute!(a, size(a.partitioning)...)
 
-function LinearAlgebra.mul!(y::MPIArrayAbstract{T,1}, A::MPIArrayAbstract{T,2}, b::MPIArrayAbstract{T,1}) where {T}
+function LinearAlgebra.mul!(y::AbstractMPIArray{T,1}, A::AbstractMPIArray{T,2}, b::AbstractMPIArray{T,1}) where {T}
     forlocalpart!(y) do ly
         fill!(ly,zero(T))
     end
@@ -226,14 +226,14 @@ end
 
 Get the local index range (expressed in terms of global indices) of the given rank
 """
-@inline localindices(a::MPIArrayAbstract, rank::Integer=a.myrank) = a.partitioning[rank+1]
+@inline localindices(a::AbstractMPIArray, rank::Integer=a.myrank) = a.partitioning[rank+1]
 
 """
     forlocalpart(f, a::MPIArray)
 
 Execute the function f on the part of a owned by the current rank. It is assumed f does not modify the local part.
 """
-function forlocalpart(f, a::MPIArrayAbstract)
+function forlocalpart(f, a::AbstractMPIArray)
     MPI.Win_lock(MPI.LOCK_SHARED, a.myrank, 0, a.win)
     result = f(a.localarray)
     MPI.Win_unlock(a.myrank, a.win)
@@ -245,7 +245,7 @@ end
 
 Execute the function f on the part of a owned by the current rank. The local part may be modified by f.
 """
-function forlocalpart!(f, a::MPIArrayAbstract)
+function forlocalpart!(f, a::AbstractMPIArray)
     MPI.Win_lock(MPI.LOCK_EXCLUSIVE, a.myrank, 0, a.win)
     result = f(a.localarray)
     MPI.Win_unlock(a.myrank, a.win)
@@ -264,11 +264,11 @@ function linear_ranges(indexblock)
 end
 
 struct Block{T,N}
-    array::MPIArrayAbstract{T,N}
+    array::AbstractMPIArray{T,N}
     ranges::NTuple{N,UnitRange{Int}}
     targetrankindices::CartesianIndices{N,NTuple{N,UnitRange{Int}}}
 
-    function Block(a::MPIArrayAbstract{T,N}, ranges::Vararg{AbstractRange{Int},N}) where {T,N}
+    function Block(a::AbstractMPIArray{T,N}, ranges::Vararg{AbstractRange{Int},N}) where {T,N}
         # TODO CyclicRange
         # search target_rank_indices by ranges
         start_indices =  searchsortedfirst.(a.partitioning.index_ends, first.(ranges))
@@ -278,8 +278,8 @@ struct Block{T,N}
     end
 end
 
-Base.getindex(a::MPIArrayAbstract{T,N}, I::Vararg{UnitRange{Int},N}) where {T,N} = Block(a,I...)
-Base.getindex(a::MPIArrayAbstract{T,N}, I::Vararg{Colon,N}) where {T,N} = Block(a,axes(a)...)
+Base.getindex(a::AbstractMPIArray{T,N}, I::Vararg{UnitRange{Int},N}) where {T,N} = Block(a,I...)
+Base.getindex(a::AbstractMPIArray{T,N}, I::Vararg{Colon,N}) where {T,N} = Block(a,axes(a)...)
 # TODO Cyclic distributed MPIArray
 # Base.getindex(a::MPIArray{T,N}, I::Vararg{CyclicRange{Int},N}) where {T,N} = Block(a,I...)
 
@@ -351,7 +351,7 @@ function putblock!(a::AbstractArray{T,N}, b::Block{T,N}, op::Function=_no_op) wh
     blockloop(a, b, MPI.LOCK_EXCLUSIVE, localfun, mpifun)
 end
 
-function free(a::MPIArrayAbstract{T,N}) where {T,N}
+function free(a::AbstractMPIArray{T,N}) where {T,N}
     sync(a)
     MPI.free(a.win)
 end
@@ -376,19 +376,19 @@ Read-only block, providing access to the local data and an arbitrary number of o
 This is a vector because the represented region is not necessarily square
 """
 struct GhostedBlock{T,N} <: AbstractArray{T,1}
-    array::MPIArrayAbstract{T,N}
+    array::AbstractMPIArray{T,N}
     globaltolocal::Dict{Int, Int}
     localtoglobal::Vector{Int}
     ghostvalues::Vector{T}
 
-    GhostedBlock(a::MPIArrayAbstract{T,N}) where {T,N} = new{T,N}(a, Dict{Int,Int}(), Vector{Int}(), Vector{T}())
+    GhostedBlock(a::AbstractMPIArray{T,N}) where {T,N} = new{T,N}(a, Dict{Int,Int}(), Vector{Int}(), Vector{T}())
 end
 
 """
 Construct a sorted GhostedBlock that contains all the given gids
 The passed list of gids may contain duplicates
 """
-function GhostedBlock(a::MPIArrayAbstract{T,1}, gids) where T
+function GhostedBlock(a::AbstractMPIArray{T,1}, gids) where T
     gb = GhostedBlock(a)
     locinds = localindices(a)[1]
     nb_unique = 0
