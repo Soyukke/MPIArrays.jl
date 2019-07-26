@@ -1,4 +1,4 @@
-# Cyclic distribute array to each process
+# Block-Cyclic distribute array to each process
 
 For use ScaLAPACK.jl
 

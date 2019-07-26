@@ -57,14 +57,37 @@ function test_triu(k)
     free(A, B)
 end
 
+function test_triu_loop()
+    for k in 0:-1:-7
+        test_triu!(k)
+    end
 
-for k in 0:-1:-7
-    test_triu!(k)
+    for k in 0:-1:-7
+        test_triu(k)
+    end
 end
 
-for k in 0:-1:-7
-    test_triu(k)
+function test_mul()
+    N = 5
+    A = CyclicMPIArray(Float64, N, N, proc_grids=(2, 2))
+    B = CyclicMPIArray(Float64, N, N, proc_grids=(2, 2))
+    forlocalpart!(x->fill!(x, rank), A)
+    sync(A)
+    # C = MPIArray{Float64}(N, N)
+    # D = C[:, :]
+    # C = A * B
+    E = convert(Array, A)
+
+    # MPIArray -> Block
+    # if rank == 0
+        # D = A[:, :]
+        # print(typeof(D))
+        # show(stdout, "text/plain", getblock(D))
+        show(stdout, "text/plain", E)
+        println()
+    # end
 end
 
+test_mul()
 
 MPI.Finalize()

@@ -12,9 +12,6 @@ include("cyclic_range.jl")
 include("partitioning.jl")
 include("linalg.jl")
 
-
-
-
 # Evenly distribute nb_elems over parts partitions
 function distribute(nb_elems, parts)
     local_len = nb_elems ÷ parts
@@ -181,6 +178,26 @@ function Base.filter!(f,a::AbstractMPIArray)
     error("filter is only supported on 1D MPIArrays")
 end
 
+function Base.convert(::Type{Array}, A::AbstractMPIArray{T, N}) where {T, N}
+    # TODO
+    comm = MPI.COMM_WORLD
+    root = 0
+    n_proc = MPI.Comm_size(comm)
+    C = Array{T, N}(undef, size(A)...)
+    D = Array{T, N}(undef, size(A)...)
+    # number of send data each process
+    counts = Cint.(reshape(map(rank->prod(length.(localindices(A, rank-1))), pids(A)), n_proc))
+    MPI.Gatherv!(A.localarray, C, counts, root, comm)
+    istart = 1
+    for (pid, count) in enumerate(counts)
+        indices = localindices(A, pid-1)
+        nrow, ncol = length.(indices)
+        D[indices...] .= reshape(C[istart:istart+count-1], (nrow, ncol))
+        istart += count
+    end
+    return D
+end
+
 function copy_into!(dest::AbstractMPIArray{T,N}, src::AbstractMPIArray{T,N}) where {T,N}
     free(dest)
     dest.sizes = src.sizes
@@ -274,8 +291,8 @@ end
 
 struct Block{T,N}
     array::AbstractMPIArray{T,N}
-    ranges::NTuple{N,UnitRange{Int}}
-    targetrankindices::CartesianIndices{N,NTuple{N,UnitRange{Int}}}
+    ranges::NTuple{N,UnitRange{Int}} # required global range
+    targetrankindices::CartesianIndices{N,NTuple{N,UnitRange{Int}}} # split global ranges as local indices
 
     function Block(a::AbstractMPIArray{T,N}, ranges::Vararg{AbstractRange{Int},N}) where {T,N}
         # TODO CyclicRange
@@ -287,10 +304,11 @@ struct Block{T,N}
     end
 end
 
+
+
+# call A[1:4, 2:3] return Block
 Base.getindex(a::AbstractMPIArray{T,N}, I::Vararg{UnitRange{Int},N}) where {T,N} = Block(a,I...)
 Base.getindex(a::AbstractMPIArray{T,N}, I::Vararg{Colon,N}) where {T,N} = Block(a,axes(a)...)
-# TODO Cyclic distributed MPIArray
-# Base.getindex(a::MPIArray{T,N}, I::Vararg{CyclicRange{Int},N}) where {T,N} = Block(a,I...)
 
 
 """
