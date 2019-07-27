@@ -178,25 +178,25 @@ function Base.filter!(f,a::AbstractMPIArray)
     error("filter is only supported on 1D MPIArrays")
 end
 
-function Base.convert(::Type{Array}, A::AbstractMPIArray{T, N}) where {T, N}
-    # TODO
-    comm = MPI.COMM_WORLD
-    root = 0
-    n_proc = MPI.Comm_size(comm)
-    C = Array{T, N}(undef, size(A)...)
-    D = Array{T, N}(undef, size(A)...)
-    # number of send data each process
-    counts = Cint.(reshape(map(rank->prod(length.(localindices(A, rank-1))), pids(A)), n_proc))
-    MPI.Gatherv!(A.localarray, C, counts, root, comm)
-    istart = 1
-    for (pid, count) in enumerate(counts)
-        indices = localindices(A, pid-1)
-        nrow, ncol = length.(indices)
-        D[indices...] .= reshape(C[istart:istart+count-1], (nrow, ncol))
-        istart += count
-    end
-    return D
-end
+# function Base.convert(::Type{Array}, A::AbstractMPIArray{T, N}) where {T, N}
+#     # TODO
+#     comm = MPI.COMM_WORLD
+#     root = 0
+#     n_proc = MPI.Comm_size(comm)
+#     C = Array{T, N}(undef, size(A)...)
+#     D = Array{T, N}(undef, size(A)...)
+#     # number of send data each process
+#     counts = Cint.(reshape(map(rank->prod(length.(localindices(A, rank-1))), pids(A)), n_proc))
+#     MPI.Gatherv!(A.localarray, C, counts, root, comm)
+#     istart = 1
+#     for (pid, count) in enumerate(counts)
+#         indices = localindices(A, pid-1)
+#         nrow, ncol = length.(indices)
+#         D[indices...] .= reshape(C[istart:istart+count-1], (nrow, ncol))
+#         istart += count
+#     end
+#     return D
+# end
 
 function copy_into!(dest::AbstractMPIArray{T,N}, src::AbstractMPIArray{T,N}) where {T,N}
     free(dest)
