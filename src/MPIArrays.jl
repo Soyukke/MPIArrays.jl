@@ -1,7 +1,7 @@
 module MPIArrays
 
 export MPIArray, localindices, getblock, getblock!, putblock!, allocate, forlocalpart, forlocalpart!, free, redistribute, redistribute!, sync, GlobalBlock, GhostedBlock, getglobal, globaltolocal, globalids
-export CyclicMPIArray, pids, blocksizes
+export CyclicMPIArray, pids, blocksizes, rma!
 
 using MPI
 import LinearAlgebra
@@ -24,7 +24,7 @@ mutable struct MPIArray{T,N} <: AbstractMPIArray{T,N}
     localarray::Array{T,N}
     partitioning::Partitioning{N}
     comm::MPI.Comm
-    win::MPI.Win
+    win
     myrank::Int
 
     function MPIArray{T}(comm::MPI.Comm, partition_sizes::Vararg{AbstractVector{<:Integer},N}) where {T,N}
@@ -33,7 +33,7 @@ mutable struct MPIArray{T,N} <: AbstractMPIArray{T,N}
         partitioning = ContinuousPartitioning(partition_sizes...)
 
         localarray = Array{T}(undef,length.(partitioning[rank+1]))
-        win = MPI.Win_create(localarray, comm)
+        win = nothing
         sizes = sum.(partition_sizes)
         return new{T,N}(sizes, localarray, partitioning, comm, win, rank)
     end
@@ -54,7 +54,7 @@ mutable struct MPIArray{T,N} <: AbstractMPIArray{T,N}
             return getindex.(partition_size_array[idx...],dim)
         end
 
-        win = MPI.Win_create(localarray, comm)
+        win = nothing
         result = new{T,N}(sum.(partition_sizes), localarray, ContinuousPartitioning(partition_sizes...), comm, win, rank)
         return result
     end
@@ -68,14 +68,12 @@ mutable struct MPIArray{T,N} <: AbstractMPIArray{T,N}
         rank = MPI.Comm_rank(comm)
         partitioning = CyclicPartitioning(array_sizes=sizes, n_procs=n_procs, blocksizes=blocksizes)
         localarray = Array{T}(undef,length.(partitioning[rank+1]))
-        win = MPI.Win_create(localarray, comm)
+        win = nothing
         return new{T, N}(sizes, localarray, partitioning, comm, win, rank)
     end
     # MPIArray{T}(;sizes::NTuple{N, Integer}, n_procs::NTuple{N, Integer}=(MPI.Comm_size(MPI.COMM_WORLD), ones(Int, N-1)...) , blocksizes::NTuple{N, Integer}=(1, 1)) where {T, N} = MPIArray{T}(MPI.COMM_WORLD, n_procs, blocksizes, sizes...)
 
-    MPIArray{T, N}(sizes::NTuple{N, Int}, localarray::Array{T, N}, partitioning::Partitioning{N}, comm::MPI.Comm, win::MPI.Win, myrank::Int) where {T, N} = new{T, N}(sizes, localarray, partitioning, comm, win, myrank)
-
-
+    MPIArray{T, N}(sizes::NTuple{N, Int}, localarray::Array{T, N}, partitioning::Partitioning{N}, comm::MPI.Comm, win, myrank::Int) where {T, N} = new{T, N}(sizes, localarray, partitioning, comm, win, myrank)
 end
 
 function CyclicMPIArray(T::Type, sizes::Vararg{<:Integer, N}; comm=MPI.COMM_WORLD, proc_grids=(MPI.Comm_size(MPI.COMM_WORLD), ones(Int, N-1)...), blocksizes=Tuple(ones(Int, N))) where N
@@ -94,7 +92,7 @@ Base.size(a::AbstractMPIArray) = a.sizes
 function Base.copy(a::AbstractMPIArray{T, N}) where {T, N}
     localarray = copy(a.localarray)
     partitioning = a.partitioning
-    win = MPI.Win_create(localarray, a.comm)
+    win = nothing
     return MPIArray{T, N}(a.sizes, localarray, partitioning, a.comm, win, a.myrank)
 end
 # Individual element access. WARNING: this is slow
@@ -260,9 +258,7 @@ Get the local index range (expressed in terms of global indices) of the given ra
 Execute the function f on the part of a owned by the current rank. It is assumed f does not modify the local part.
 """
 function forlocalpart(f, a::AbstractMPIArray)
-    MPI.Win_lock(MPI.LOCK_SHARED, a.myrank, 0, a.win)
     result = f(a.localarray)
-    MPI.Win_unlock(a.myrank, a.win)
     return result
 end
 
@@ -272,9 +268,7 @@ end
 Execute the function f on the part of a owned by the current rank. The local part may be modified by f.
 """
 function forlocalpart!(f, a::AbstractMPIArray)
-    MPI.Win_lock(MPI.LOCK_EXCLUSIVE, a.myrank, 0, a.win)
     result = f(a.localarray)
-    MPI.Win_unlock(a.myrank, a.win)
     return result
 end
 
@@ -557,5 +551,25 @@ function sync(b::GhostedBlock)
         MPI.Win_unlock(lockedrank, b.array.win)
     end
 end
+
+"""
+    Usage
+    A is a MPIArray
+    A_array = rma!(A) do
+        convert(Array, A)
+    end
+"""
+function rma!(f, vA::Vararg{AbstractMPIArray , N}) where N
+    for A in vA
+        A.win = MPI.Win_create(A.localarray, A.comm)
+    end
+    val = f()
+    for A in vA
+        MPI.free(A.win)
+    end
+    return val
+end
+
+
 
 end # module
